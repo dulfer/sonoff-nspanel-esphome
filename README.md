@@ -25,7 +25,7 @@ The device is powered by an Espressif ESP32 and features a `Nextion NX4832F035_0
 ## Programming
 To put ESP32 in firmware programming mode, ground IO0 before powering the chip.
 
-![Programming](:../../assets/nspanel-programming-wiring.jpg)
+![Programming](assets/nspanel-programming-wiring.jpg)
 
 [TODO: Detailed description of flashing process]
 
