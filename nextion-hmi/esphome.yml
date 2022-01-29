@@ -1,0 +1,413 @@
+# Set some variables for convenience
+substitutions:
+  device_name: nspanel-01
+  device_description: Hallway NSPanel
+  tft_hmi_location: 'https://homeassistant.local/local/nspanel'
+  screen_default_brightness: '20'
+
+# Note: this may not be needed if the pull request has been merged.
+# Check https://github.com/esphome/esphome/pull/2956 for current status.
+external_components:
+  - source: github://pr#2956
+    components: [nextion]
+    refresh: 1h
+
+esphome:
+  name: $device_name
+  comment: $device_description
+  on_boot:
+    - wait_until: 
+        api.connected:
+
+esp32:
+  board: esp32dev
+
+wifi:
+  ssid: !secret wifi_not_ssid
+  password: !secret wifi_not_password
+  fast_connect: true
+
+# Enable logging
+logger:
+  level: ERROR
+  
+# Enable Home Assistant API
+ota:
+  password: !secret esphome_ota_password
+
+web_server:
+  port: 80
+  
+# Enable Home Assistant API
+api:
+  services:
+    - service: upload_tft
+      then:
+        - lambda: 'id(disp1).upload_tft();'
+    - service: send_command
+      variables:
+        cmd: string
+      then:
+        - lambda: 'id(disp1).send_command_printf("%s", cmd.c_str());'
+    - service: set_text
+      variables:
+        name: string
+        state: string
+      then:
+        - lambda: |-
+            id(disp1).set_nextion_text_state(name,state);
+
+# Sync the time
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    timezone: "Europe/Amsterdam"
+    on_time:
+      - seconds: 0
+        minutes: '*'
+        then:
+          - lambda: |-
+              auto time_text = id(homeassistant_time).now().strftime("%H:%M");
+              auto date_text = id(homeassistant_time).now().strftime("%d %B %Y");
+              id(disp1).set_component_text("tTime", time_text.c_str());
+              id(disp1).set_component_text("tDate", date_text.c_str());
+              
+
+# A reboot button is always useful
+button:
+  - platform: restart
+    name: $device_name Restart 
+    device_class: restart
+    
+  - platform: template
+    name: $device_name Nextion TFT Upload
+    device_class: update
+    on_press:
+      - lambda: 'id(disp1).upload_tft();'
+      
+  - platform: template
+    id: sensor_update
+    name: $device_name Sensor Update
+    device_class: update
+    on_press:
+      - lambda: |-
+          id(disp1).set_component_text_printf(
+            "tTemp", "%.1f""\xb0""C ", id(current_temperature).state
+          );
+          id(disp1).set_component_text_printf(
+            "tFeelTemp", "%.1f""\xb0""C ", id(current_feel_temperature).state
+          );
+          id(disp1).set_component_text( "tCondition",  id(weather_condition).state.c_str() );
+          id(disp1).set_component_text( "tWind",  id(wind_condition).state.c_str() );
+          
+          id(disp1).set_component_text_printf( "tRainPredict", "%.1f mm", id(precipitation_forecast_total).state);
+          id(disp1).set_component_text_printf(
+            "tWindSpeed", "%.1f km/u", id(wind_speed).state
+          );
+          id(disp1).set_component_text_printf(
+            "tGridIn", "%.2f kWh", id(energy_grid_in).state
+          );
+          id(disp1).set_component_text_printf(
+            "tGridOut", "%.2f kWh", id(energy_grid_out).state
+          );
+          id(disp1).set_component_text_printf(
+            "tSolarToday", "%.0f Wh", id(solar_daily_total).state
+          );
+          id(disp1).set_component_text_printf(
+            "tSolarPower", "%.0f Watt", id(solar_power_current).state
+          );
+          
+          id(disp1).set_component_text("tTime", id(homeassistant_time).now().strftime("%H:%M").c_str());
+          id(disp1).set_component_text("tDate", id(homeassistant_time).now().strftime("%d %B %Y").c_str());
+          
+          if (id(light_frontdoor).state) {
+            id(disp1).set_component_value("bLight2",1);
+          } else {
+            id(disp1).set_component_value("bLight2",0);
+          }
+          
+          if (id(light_hallway).state) {
+            id(disp1).set_component_value("bLight1",1);
+          } else {
+            id(disp1).set_component_value("bLight1",0);
+          }
+       
+
+# Define some inputs
+binary_sensor:
+  - platform: gpio
+    name: $device_name Left Button
+    pin:
+      number: 14
+      inverted: true
+
+  - platform: gpio
+    name: $device_name Right Button
+    pin:
+      number: 27
+      inverted: true
+      
+  - platform: nextion
+    name: $device_name Away Button
+    page_id: 0
+    component_id: 14
+
+  - platform: nextion
+    name: $device_name Bed Button
+    page_id: 0
+    component_id: 15
+    
+  - platform: nextion
+    name: $device_name Light1 Button
+    page_id: 0
+    component_id: 17
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(light_hallway).state;'
+          then:
+            - homeassistant.service:
+                service: light.turn_off
+                data:
+                  entity_id: light.hallway
+            - component.update: disp1
+          else:
+              - homeassistant.service:
+                  service: light.turn_on
+                  data:
+                    entity_id: light.hallway
+              - component.update: disp1  
+    
+  - platform: nextion
+    name: $device_name Light2 Button
+    page_id: 0
+    component_id: 16
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(light_frontdoor).state;'
+          then:
+            - homeassistant.service:
+                service: switch.turn_off
+                data:
+                  entity_id: switch.switch01_relay1
+            - component.update: disp1
+          else:
+              - homeassistant.service:
+                  service: switch.turn_on
+                  data:
+                    entity_id: switch.switch01_relay1
+              - component.update: disp1  
+    
+  - platform: homeassistant
+    id: light_hallway
+    entity_id: light.hallway
+    on_state:
+      then:
+        - lambda: |- 
+                if (id(light_hallway).state) {
+                  id(disp1).set_component_value("bLight1",1);
+                } else {
+                  id(disp1).set_component_value("bLight1",0);
+                }
+        - component.update: disp1
+        
+  - platform: homeassistant
+    id: light_frontdoor
+    entity_id: switch.switch01_relay1
+    on_state:
+      then:
+        - lambda: |- 
+                if (id(light_frontdoor).state) {
+                  id(disp1).set_component_value("bLight2",1);
+                } else {
+                  id(disp1).set_component_value("bLight2",0);
+                }
+        - component.update: disp1   
+  
+
+sensor:
+  - platform: wifi_signal
+    name: $device_name WiFi Signal
+    update_interval: 60s
+
+  # Internal temperature sensor, resistance to temperature (calculation)
+  - platform: ntc
+    id: temperature
+    sensor: resistance_sensor
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 10kOhm
+    name: $device_name Temperature
+
+   # Internal temperature sensor, adc value
+  - platform: adc
+    id: ntc_source
+    pin: 38
+    update_interval: 10s
+    attenuation: 11db
+
+  # Internal temperature sensor, adc reading converted to resistance (calculation) 
+  - platform: resistance
+    id: resistance_sensor
+    sensor: ntc_source
+    configuration: DOWNSTREAM
+    resistor: 11.2kOhm
+
+  # Grab current sensor values from Home Assistant
+  
+  - platform: homeassistant
+    id: wind_speed
+    entity_id: weather.home
+    attribute: wind_speed
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tWindSpeed", "%.1f km/u", x);'
+        
+  - platform: homeassistant
+    id: current_temperature
+    entity_id: weather.home
+    attribute: temperature
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tTemp", "%.1f""\xb0""C ", x);'
+
+  - platform: homeassistant
+    id: current_feel_temperature
+    entity_id: sensor.buienradar_feel_temperature
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tFeelTemp", "%.1f""\xb0""C ", x);'
+
+  - platform: homeassistant
+    id: precipitation_forecast_total
+    entity_id: sensor.buienradar_precipitation_forecast_total
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tRainPredict", "%.1f mm ", x);'
+        
+  - platform: homeassistant
+    id: energy_grid_in
+    entity_id: sensor.energy_grid_consumption_today
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tGridIn", "%.2f kWh", x);'
+  
+  - platform: homeassistant
+    id: energy_grid_out
+    entity_id: sensor.energy_grid_production_today
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tGridOut", "%.2f kWh", x);'
+  
+  - platform: homeassistant
+    id: solar_daily_total
+    entity_id: sensor.solaredge_energy_today
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tSolarToday", "%.0f Wh", x);'
+  
+  - platform: homeassistant
+    id: solar_power_current
+    entity_id: sensor.solaredge_current_power
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tSolarPower", "%.0f Watt", x);'
+
+text_sensor:
+  - platform: nextion
+    name: $device_name Screen Title
+    id: tTitle
+    component_name: tTitle
+    entity_category: config
+    on_value:
+      then:
+        - lambda: 'id(disp1).set_component_text("tTitle", x.c_str());'
+
+  - platform: homeassistant
+    id: weather_condition
+    entity_id: sensor.buienradar_symbol
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text("tCondition", x.c_str());'
+  
+  - platform: homeassistant
+    id: wind_condition
+    entity_id: sensor.weather_wind_condition_bft
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("tWind", "%s Bft", x.c_str());'
+        
+      
+# Define some outputs
+switch:
+  # Relays
+  - platform: gpio
+    name: $device_name Relay 1
+    id: relay_1
+    pin:
+      number: 22
+    
+  - platform: gpio
+    name: $device_name Relay 2
+    id: relay_2
+    pin:
+      number: 19
+
+  # Pin 4 high to power display
+  - platform: gpio
+    name: $device_name Screen
+    id: screen_power
+    entity_category: config
+    pin:
+      number: 4
+      inverted: true
+    restore_mode: ALWAYS_ON
+
+number:
+  platform: template
+  name: $device_name Backlight Brightness
+  id: brightness
+  entity_category: config
+  unit_of_measurement: '%'
+  min_value: 0
+  max_value: 100
+  step: 1
+  initial_value: ${screen_default_brightness}
+  set_action:
+    then:
+      - lambda: 'id(disp1).set_backlight_brightness(x/100);'
+
+
+# Configure UART for communicating with the screen
+uart:
+  id: tf_uart
+  tx_pin: 16
+  rx_pin: 17
+  baud_rate: 115200
+
+# Configure the screen itself
+display:
+  - platform: nextion
+    id: disp1
+    uart_id: tf_uart
+    tft_url: $tft_hmi_location/$device_name.tft
+    on_setup:
+      then:
+        - number.set:
+            id: brightness
+            value: ${screen_default_brightness}
+        - button.press: sensor_update
