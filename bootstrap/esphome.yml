@@ -1,0 +1,172 @@
+substitutions:
+  device_name: ESPHome NSPanel
+  device_description: Demo NSPanel
+  tft_hmi_location: 'https://homeassistant.local/local/nspanel'
+  screen_default_brightness: '50'
+
+
+# Shamelessly copied from Christopher Masto (https://www.youtube.com/user/chrismasto)
+# Might not be required in future builds of ESPHome
+# Check https://github.com/esphome/esphome/pull/2956 for current status.
+external_components:
+  - source: github://pr#2956
+    components: [nextion]
+    refresh: 1h
+
+esphome:
+  name: $device_name
+  comment: $device_description
+
+esp32:
+  board: esp32dev
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# Enable logging
+logger:
+
+# Enable wireless updates
+ota:
+
+# Enable Home Assistant API
+api:
+  services:
+    - service: upload_tft
+      then:
+        - lambda: 'id(disp1)->upload_tft();'
+
+# A reboot button is always useful
+button:
+  - platform: restart
+    name: Restart $device_name
+
+# Define some inputs
+binary_sensor:
+  - platform: gpio
+    name: $device_name Left Button
+    pin:
+      number: 14
+      inverted: true
+    on_click:
+      - switch.toggle: relay_1
+
+  - platform: gpio
+    name: $device_name Right Button
+    pin:
+      number: 27
+      inverted: true
+    on_click:
+      - switch.toggle: relay_2
+
+  # Nextion screen buttons
+  - platform: nextion
+    name: $device_name Button 1
+    page_id: 0
+    component_id: 3
+
+  - platform: nextion
+    name: $device_name Button 2
+    page_id: 0
+    component_id: 4
+
+
+sensor:
+  - platform: wifi_signal
+    name: $device_name WiFi Signal Strength
+    update_interval: 60s
+
+  # NSPanel on-board temperature sensor
+  - platform: ntc
+    id: temperature
+    sensor: resistance_sensor
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 10kOhm
+    name: $device_name Temperature
+
+  - platform: resistance
+    id: resistance_sensor
+    sensor: ntc_source
+    configuration: DOWNSTREAM
+    resistor: 11.2kOhm
+
+  - platform: adc
+    id: ntc_source
+    pin: 38
+    update_interval: 10s
+    attenuation: 11db
+
+# page0 title bar text
+text_sensor:
+  - platform: nextion
+    name: $device_name Page Title
+    id: t0
+    component_name: t0
+    entity_category: config
+    on_value:
+      then:
+        - lambda: 'id(disp1).set_component_text("t0", x.c_str());'
+
+switch:
+  # The two internal relays
+  - platform: gpio
+    name: $device_name Relay 1
+    id: relay_1
+    pin:
+      number: 22
+  - platform: gpio
+    name: $device_name Relay 2
+    id: relay_2
+    pin:
+      number: 19
+
+  # Pin 4, powers Nextion
+  - platform: gpio
+    id: screen_power
+    name: $device_name Nextion Power
+    entity_category: config
+    pin:
+      number: 4
+      inverted: true
+    restore_mode: ALWAYS_ON
+
+# expose brightness setting
+number:
+  platform: template
+  name: $device_name Brightness
+  id: brightness
+  entity_category: config
+  unit_of_measurement: '%'
+  min_value: 0
+  max_value: 100
+  step: 1
+  initial_value: ${screen_default_brightness}
+  set_action:
+    then:
+      - lambda: 'id(disp1).set_backlight_brightness(x/100);'
+
+# Set pins for communication with Nextion display (UART)
+uart:
+  id: tf_uart
+  tx_pin: 16
+  rx_pin: 17
+  baud_rate: 115200
+
+# Nextion display configuration
+display:
+  - platform: nextion
+    id: disp1
+    uart_id: tf_uart
+    tft_url: $tft_hmi_location/$device_name.tft
+    on_setup:
+      then:
+        - number.set:
+            id: brightness
+            value: ${screen_default_brightness}
+        - lambda: |-
+            id(disp1).set_component_text_printf(
+              "temp", "%.1f ""\xb0""F", id(current_temperature).state
+            );
