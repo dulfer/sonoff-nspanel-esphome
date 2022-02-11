@@ -41,6 +41,14 @@ lcd_dev fffb 0002 0000 0020 // fix LCD touch offset error
 page 0                       //Power on start page 0
 
 ```
+
+## Animating icons
+Animating icons look cool and can be useful to draw attention for important notifications as well. Therefore **had to be** be part of the dashboard.  
+
+The Nextion display does not support animated GIFs. But with just a little bit of scripting some very nice results can be achieved. 
+
+I wrote this process down in a walkthrough on how to [animate icons on a NSPanel  Nextion display](nextion-hmi/docs/nextion-animating-icons.md).
+
 # References
 |||
 |-|-|
